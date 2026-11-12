@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kion. — 気温から、今日の服を。</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&amp;family=Noto+Sans+JP:wght@300;400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#16295a}
+a{color:#2f62d6}a:hover{color:#1d47a8}
+[data-theme="light"]{--fg:#0f1f3a;--sub:#34425a;--muted:#44526a;--glass:rgba(255,255,255,0.45);--glass-2:rgba(255,255,255,0.5);--glass-3:rgba(255,255,255,0.72);--border:rgba(255,255,255,0.78);--solid:#0f1f3a;--on-solid:#ffffff;--on-solid-sub:#d6def0;--accent:#2a5bcc;--accent-soft:rgba(47,98,214,0.12);--line:rgba(15,31,58,0.12);--shadow:rgba(22,44,90,0.14);--hi:rgba(255,255,255,0.9);--bar:rgba(47,98,214,0.22);--warm:rgba(242,163,58,0.55);--c-amber:#a45608;--c-violet:#5b44c2;--c-teal:#0f6b5f;--dialog:#f3f6fb}
+[data-theme="dark"]{--fg:#f4f7fc;--sub:#c6d0e2;--muted:#b3bed2;--glass:rgba(10,16,36,0.42);--glass-2:rgba(255,255,255,0.08);--glass-3:rgba(255,255,255,0.16);--border:rgba(255,255,255,0.18);--solid:#f4f7fc;--on-solid:#0f1f3a;--on-solid-sub:#3d4c64;--accent:#a8c4ff;--accent-soft:rgba(168,196,255,0.18);--line:rgba(255,255,255,0.16);--shadow:rgba(0,0,0,0.35);--hi:rgba(255,255,255,0.12);--bar:rgba(168,196,255,0.3);--warm:rgba(255,196,107,0.6);--c-amber:#ffc27a;--c-violet:#c9bcff;--c-teal:#86e3d6;--dialog:#131c36}
+[data-theme="dark"] a{color:#a8c4ff}[data-theme="dark"] a:hover{color:#d2e0ff}
+[data-theme="dark"] input,[data-theme="dark"] textarea{color-scheme:dark}
+#root{position:relative;min-height:100vh;overflow:hidden;background:#16295a;font-family:'Inter','Noto Sans JP',sans-serif;color:var(--fg)}
+#sky{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.wrap{position:relative;z-index:1;margin:0 auto;padding:0 40px 64px;box-sizing:border-box}
+.h-hero{margin:0;font-size:60px;line-height:1.2;font-weight:700;letter-spacing:-0.02em}
+.t-big{font-family:'Inter',sans-serif;font-size:128px;font-weight:200;line-height:0.95;letter-spacing:-0.05em}
+.card-pad{padding:36px}
+button,a{-webkit-tap-highlight-color:transparent}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:0.6;cursor:default}
+dialog{border:1px solid var(--border);border-radius:28px;padding:32px;max-width:520px;width:calc(100% - 48px);box-sizing:border-box;background:var(--dialog);color:var(--fg);font-family:inherit;box-shadow:0 30px 80px rgba(0,0,0,0.4)}
+dialog::backdrop{background:rgba(5,10,25,0.55)}
+@keyframes kion-rain{from{transform:translate3d(0,-160px,0) rotate(12deg)}to{transform:translate3d(-330px,1500px,0) rotate(12deg)}}
+@keyframes kion-drift{from{transform:translateX(-6%)}to{transform:translateX(6%)}}
+@keyframes kion-twinkle{0%,100%{opacity:0.25}50%{opacity:1}}
+@keyframes kion-glow{0%,100%{transform:scale(1);opacity:0.92}50%{transform:scale(1.05);opacity:1}}
+@keyframes kion-flash{0%,84%,100%{opacity:0}85%{opacity:0.9}86.5%{opacity:0.1}88%{opacity:0.75}91%{opacity:0}}
+@keyframes kion-spin{to{transform:rotate(360deg)}}
+.spin{animation:kion-spin 1s linear infinite}
+@media (prefers-reduced-motion: reduce){#sky *{animation:none !important}}
+@media (max-width: 640px){
+.wrap{padding:0 16px 48px}
+.h-hero{font-size:40px}
+.t-big{font-size:96px}
+.card-pad{padding:24px}
+.steps li{padding:8px 10px !important}
+}
+</style>
+</head>
+<body>
+<div id="root" data-theme="light">
+  <div id="sky" aria-hidden="true"></div>
+  <div id="app"></div>
+  <dialog id="sync" aria-labelledby="sync-h"></dialog>
+</div>
+<noscript>このページを表示するには JavaScript を有効にしてください。</noscript>
+<script>
+'use strict';
+/* ---------- 保存データ（設定のみ。現在地の座標は保存しない） ---------- */
+const KEY = 'kion.v1';
+const DEFAULTS = { place: null, recents: [], sens: 'normal', move: 'train', taste: 'casual', out: '08:00', back: '19:00', done: false };
+let S = Object.assign({}, DEFAULTS);
+try { S = Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+/* ---------- 実行時の状態 ---------- */
+const G = { coords: null, wx: null, wxKey: '', wxAt: 0, wxLoading: false, wxError: '', geoBusy: false, geoMsg: '', query: '', results: null, searching: false, variant: 0, skyKey: '' };
+
+const SUGGEST = [
+  { name: '北九州市 小倉北区', sub: '福岡県', lat: 33.8835, lon: 130.8752 },
+  { name: '福岡市 中央区', sub: '福岡県', lat: 33.5892, lon: 130.3928 },
+  { name: '大分市', sub: '大分県', lat: 33.2396, lon: 131.6093 },
+  { name: '熊本市 中央区', sub: '熊本県', lat: 32.8031, lon: 130.7079 }
+];
+const SENS = { cold: '寒がり', normal: 'ふつう', hot: '暑がり' };
+const MOVE = { walk: '徒歩', bike: '自転車', train: '電車・バス', car: '車' };
+const TASTE = { casual: 'カジュアル', clean: 'きれいめ', office: 'オフィス', outdoor: 'アウトドア' };
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const R = Math.round;
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/* ---------- 空（デザインの kionSky をそのまま移植） ---------- */
+function kionTime(h) {
+  if (h >= 5 && h < 10) return 'morning';
+  if (h >= 10 && h < 16) return 'day';
+  if (h >= 16 && h < 19) return 'evening';
+  return 'night';
+}
+function kionSky(time, weather) {
+  const k = 1, rk = 'kion-rain';
+  const r = (i, s) => { const x = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return x - Math.floor(x); };
+  const f = (n) => Math.round(n * 100) / 100;
+  const night = time === 'evening' || time === 'night';
+  const dark = night || weather === 'thunder';
+  const Gd = {
+    'morning-clear': 'linear-gradient(180deg, #93b6ea 0%, #c3cdef 40%, #f5d3c8 74%, #ffe7c6 100%)',
+    'day-clear': 'linear-gradient(180deg, #78aef3 0%, #a3c9fa 40%, #d3e7fd 80%, #eaf4fe 100%)',
+    'evening-clear': 'linear-gradient(180deg, #161c46 0%, #3a2c6a 45%, #7c4478 72%, #c4626a 90%, #ee9a68 100%)',
+    'night-clear': 'linear-gradient(180deg, #040a1c 0%, #0b1838 45%, #16295a 80%, #1f3568 100%)',
+    'light-cloudy': 'linear-gradient(180deg, #b8c6d8 0%, #d2dce7 55%, #e6ecf2 100%)',
+    'dark-cloudy': 'linear-gradient(180deg, #0c1222 0%, #1a2338 55%, #2a3450 100%)',
+    'light-rain': 'linear-gradient(180deg, #b0bccb 0%, #c6cfda 50%, #dbe2ea 100%)',
+    'dark-rain': 'linear-gradient(180deg, #070c18 0%, #121a2c 55%, #202a3e 100%)',
+    'thunder': 'linear-gradient(180deg, #04070e 0%, #0f1524 50%, #1d2436 100%)'
+  };
+  const key = weather === 'clear' ? time + '-clear' : weather === 'thunder' ? 'thunder' : (night ? 'dark-' : 'light-') + weather;
+  const L = [];
+  const add = (style, inner) => L.push('<div style="position: absolute; pointer-events: none; ' + style + '">' + (inner ? '<div style="' + inner + '"></div>' : '') + '</div>');
+  add('inset: 0; background: ' + (Gd[key] || Gd['day-clear']) + ';');
+  if (weather === 'clear') {
+    const glow = {
+      morning: 'radial-gradient(60% 50% at 12% 100%, rgba(255,186,140,0.7), rgba(255,186,140,0) 70%)',
+      day: 'radial-gradient(45% 40% at 88% 0%, rgba(255,255,255,0.6), rgba(255,255,255,0) 70%)',
+      evening: 'radial-gradient(70% 40% at 70% 100%, rgba(255,150,90,0.55), rgba(255,150,90,0) 70%)',
+      night: 'radial-gradient(40% 30% at 85% 5%, rgba(180,200,255,0.18), rgba(180,200,255,0) 70%)'
+    };
+    add('inset: 0; background: ' + glow[time] + ';');
+  }
+  if ((time === 'morning' || time === 'day') && (weather === 'clear' || weather === 'cloudy')) {
+    const m = time === 'morning';
+    const s = (m ? 170 : 150) * k;
+    const pos = m ? 'left: 9%; top: 58%; ' : 'right: 9%; top: 6%; ';
+    const op = weather === 'cloudy' ? 'opacity: 0.4; ' : '';
+    const anim = weather === 'clear' ? ' animation: kion-glow 6s ease-in-out infinite;' : '';
+    add(pos + op + 'width: ' + f(s * 3.2) + 'px; height: ' + f(s * 3.2) + 'px; margin: ' + f(-s * 1.1) + 'px; border-radius: 50%; background: radial-gradient(circle, ' + (m ? 'rgba(255,200,150,0.6)' : 'rgba(255,240,200,0.65)') + ' 0%, rgba(255,255,255,0) 65%);');
+    add(pos + op + 'width: ' + f(s) + 'px; height: ' + f(s) + 'px; border-radius: 50%; background: radial-gradient(circle, ' + (m ? '#fff4e0 0%, #ffc98a 55%, #ff9f6b 100%' : '#fffdf2 0%, #fff0b8 55%, #ffd36b 100%') + '); box-shadow: 0 0 ' + f(80 * k) + 'px ' + f(20 * k) + 'px ' + (m ? 'rgba(255,170,110,0.55)' : 'rgba(255,225,140,0.6)') + ';' + anim);
+  }
+  if (time === 'night' && (weather === 'clear' || weather === 'cloudy')) {
+    const s = 92 * k;
+    const op = weather === 'cloudy' ? 'opacity: 0.55; ' : '';
+    add('right: 12%; top: 9%; ' + op + 'width: ' + f(s * 3) + 'px; height: ' + f(s * 3) + 'px; margin: ' + f(-s) + 'px; border-radius: 50%; background: radial-gradient(circle, rgba(220,230,255,0.3) 0%, rgba(220,230,255,0) 65%);');
+    add('right: 12%; top: 9%; ' + op + 'width: ' + f(s) + 'px; height: ' + f(s) + 'px; border-radius: 50%; background: radial-gradient(circle at 38% 38%, #fffef6 0%, #f1ecd8 60%, #d9d2b8 100%); box-shadow: 0 0 ' + f(50 * k) + 'px ' + f(8 * k) + 'px rgba(255,248,220,0.35);');
+  }
+  const starN = time === 'night' ? (weather === 'clear' ? 80 : weather === 'cloudy' ? 16 : 0) : (time === 'evening' && weather === 'clear' ? 20 : 0);
+  for (let i = 0; i < starN; i++) {
+    const sz = f((1 + r(i, 3) * 1.8) * Math.max(k, 0.7));
+    add('left: ' + f(r(i, 1) * 100) + '%; top: ' + f(r(i, 2) * (time === 'evening' ? 35 : 65)) + '%; width: ' + sz + 'px; height: ' + sz + 'px; border-radius: 50%; background: #ffffff; box-shadow: 0 0 ' + f(sz * 3) + 'px rgba(255,255,255,0.8); animation: kion-twinkle ' + f(2 + r(i, 4) * 4) + 's ease-in-out ' + f(-r(i, 5) * 6) + 's infinite;');
+  }
+  if (weather === 'rain' || weather === 'thunder') {
+    add('left: 0; right: 0; top: 0; height: 45%; background: linear-gradient(180deg, ' + (weather === 'thunder' ? 'rgba(6,8,16,0.75)' : night ? 'rgba(10,14,26,0.6)' : 'rgba(120,135,155,0.35)') + ', rgba(0,0,0,0));');
+  }
+  const cloudN = weather === 'clear' ? (time === 'night' ? 0 : 3) : weather === 'cloudy' ? 8 : weather === 'rain' ? 9 : 10;
+  const cc = weather === 'clear' ? (time === 'evening' ? 'rgba(255,170,190,0.28)' : 'rgba(255,255,255,0.6)') : weather === 'cloudy' ? (night ? 'rgba(70,84,115,0.55)' : 'rgba(255,255,255,0.72)') : weather === 'rain' ? (night ? 'rgba(42,52,74,0.75)' : 'rgba(132,146,166,0.5)') : 'rgba(26,32,48,0.9)';
+  for (let i = 0; i < cloudN; i++) {
+    const w = (360 + r(i, 7) * 380) * k;
+    const top = weather === 'clear' ? 8 + r(i, 10) * 30 : -10 + r(i, 10) * 45;
+    add('left: ' + f(-15 + r(i, 9) * 100) + '%; top: ' + f(top) + '%; width: ' + f(w) + 'px; height: ' + f(w * (0.32 + r(i, 8) * 0.14)) + 'px; border-radius: 50%; background: ' + cc + '; filter: blur(' + f(26 * k) + 'px); animation: kion-drift ' + f(40 + r(i, 11) * 40) + 's ease-in-out ' + f(-r(i, 12) * 60) + 's infinite alternate;');
+  }
+  if (weather === 'rain' || weather === 'thunder') {
+    const th = weather === 'thunder';
+    const n = th ? 150 : 110;
+    const dc = dark ? 'rgba(200,215,240,0.55)' : 'rgba(70,92,125,0.42)';
+    for (let i = 0; i < n; i++) {
+      add('left: ' + f(-5 + r(i, 13) * 120) + '%; top: 0; width: ' + (th ? 1.8 : 1.4) + 'px; height: ' + f((50 + r(i, 14) * 50) * k) + 'px; border-radius: 2px; background: linear-gradient(180deg, rgba(255,255,255,0) 0%, ' + dc + ' 100%); animation: ' + rk + ' ' + f((0.5 + r(i, 15) * 0.45) * (th ? 0.85 : 1)) + 's linear ' + f(-r(i, 16) * 1.2) + 's infinite;');
+    }
+    add('left: 0; right: 0; bottom: 0; height: 30%; background: linear-gradient(0deg, ' + (dark ? 'rgba(120,140,180,0.18)' : 'rgba(255,255,255,0.35)') + ', rgba(255,255,255,0));');
+  }
+  if (weather === 'thunder') {
+    add('inset: 0; opacity: 0; background: radial-gradient(70% 55% at 28% 8%, rgba(225,232,255,0.9), rgba(170,190,255,0.35) 55%, rgba(170,190,255,0) 80%); animation: kion-flash 7s linear 0s infinite;');
+    add('inset: 0; opacity: 0; background: radial-gradient(60% 50% at 76% 6%, rgba(225,232,255,0.8), rgba(170,190,255,0) 70%); animation: kion-flash 9s linear -4s infinite;');
+    const bolt = 'width: 100%; height: 100%; background: linear-gradient(180deg, #ffffff, #dbe6ff); clip-path: polygon(40% 0%, 68% 0%, 50% 36%, 74% 36%, 26% 100%, 40% 54%, 18% 54%);';
+    add('left: 22%; top: 0; width: ' + f(110 * k) + 'px; height: ' + f(380 * k) + 'px; opacity: 0; filter: drop-shadow(0 0 ' + f(16 * k) + 'px rgba(200,215,255,0.95)); animation: kion-flash 7s linear 0s infinite;', bolt);
+    add('left: 74%; top: 2%; width: ' + f(80 * k) + 'px; height: ' + f(280 * k) + 'px; opacity: 0; filter: drop-shadow(0 0 ' + f(14 * k) + 'px rgba(200,215,255,0.95)); animation: kion-flash 9s linear -4s infinite;', bolt);
+  }
+  return { html: L.join(''), dark: dark };
+}
+
+/* ---------- 天気コード ---------- */
+function wcat(code) {
+  if (code >= 95) return 'thunder';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+  if (code >= 51) return 'rain';
+  if (code === 3 || code === 45 || code === 48) return 'cloudy';
+  if (code === 2) return 'partly';
+  return 'clear';
+}
+function wlabel(code) {
+  if (code === 0) return '快晴';
+  if (code === 1) return '晴れ';
+  if (code === 2) return '晴れ時々くもり';
+  if (code === 3) return 'くもり';
+  if (code === 45 || code === 48) return '霧';
+  if (code >= 51 && code <= 57) return '霧雨';
+  if (code >= 61 && code <= 67) return '雨';
+  if (code >= 71 && code <= 77) return '雪';
+  if (code >= 80 && code <= 82) return 'にわか雨';
+  if (code === 85 || code === 86) return 'にわか雪';
+  if (code >= 95) return '雷雨';
+  return '—';
+}
+const skyWeather = (cat) => (cat === 'partly' ? 'clear' : cat === 'snow' ? 'cloudy' : cat);
+const windDir = (deg) => ['北', '北東', '東', '南東', '南', '南西', '西', '北西'][R(((deg % 360) + 360) % 360 / 45) % 8];
+function uvLabel(v) {
+  const n = R(v || 0);
+  return n + ' ' + (n < 1 ? 'なし' : n < 3 ? '弱い' : n < 6 ? '中程度' : n < 8 ? '強い' : n < 11 ? '非常に強い' : '極端に強い');
+}
+
+function updateSky() {
+  let hour = new Date().getHours(), weather = 'clear';
+  if (G.wx && route() !== 'location-none') {
+    hour = parseInt(G.wx.current.time.slice(11, 13), 10);
+    weather = skyWeather(wcat(G.wx.current.weather_code));
+  }
+  const time = kionTime(hour);
+  const key = time + '/' + weather;
+  if (key === G.skyKey) return;
+  G.skyKey = key;
+  const sky = kionSky(time, weather);
+  document.getElementById('sky').innerHTML = sky.html;
+  document.getElementById('root').setAttribute('data-theme', sky.dark ? 'dark' : 'light');
+}
+
+/* ---------- 位置情報・天気の取得 ---------- */
+function placeCoords() {
+  if (!S.place) return null;
+  if (S.place.geo) return G.coords;
+  return { lat: S.place.lat, lon: S.place.lon };
+}
+function geoErrorText(err) {
+  if (!('geolocation' in navigator)) return 'このブラウザは位置情報に対応していません。地域を検索してください。';
+  if (err && err.code === 1) return '位置情報の利用が許可されませんでした。ブラウザのアドレスバーから許可するか、下で地域を検索してください。';
+  if (err && err.code === 3) return '位置情報の取得がタイムアウトしました。もう一度お試しいただくか、地域を検索してください。';
+  return '現在地を取得できませんでした。もう一度お試しいただくか、地域を検索してください。';
+}
+/* ブラウザの許可ダイアログでユーザーが同意した場合のみ座標が得られる */
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) { reject(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: R(p.coords.latitude * 100) / 100, lon: R(p.coords.longitude * 100) / 100 }),
+      (e) => reject(e),
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
+    );
+  });
+}
+async function reverseName(c) {
+  try {
+    const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + c.lat + '&longitude=' + c.lon + '&localityLanguage=ja');
+    const j = await res.json();
+    const parts = [];
+    [j.city, j.locality].forEach((x) => { if (x && parts.indexOf(x) < 0) parts.push(x); });
+    return { name: parts.join(' ') || '現在地', sub: (j.principalSubdivision ? j.principalSubdivision + ' · ' : '') + '現在地' };
+  } catch (e) {
+    return { name: '現在地', sub: '現在地' };
+  }
+}
+async function useGeo(thenRender) {
+  if (G.geoBusy) return false;
+  G.geoBusy = true; G.geoMsg = '';
+  if (thenRender) render();
+  try {
+    const c = await getPosition();
+    G.coords = c;
+    const n = await reverseName(c);
+    S.place = { geo: true, name: n.name, sub: n.sub };
+    save();
+    G.geoBusy = false;
+    return true;
+  } catch (e) {
+    G.geoBusy = false;
+    G.geoMsg = geoErrorText(e);
+    return false;
+  }
+}
+async function loadWeather(force) {
+  const c = placeCoords();
+  if (!c) return;
+  const key = c.lat + ',' + c.lon;
+  if (!force && G.wx && G.wxKey === key && Date.now() - G.wxAt < 10 * 60 * 1000) return;
+  if (G.wxLoading) return;
+  G.wxLoading = true; G.wxError = '';
+  if (G.wxKey !== key) G.wx = null;
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + c.lat + '&longitude=' + c.lon +
+      '&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day' +
+      '&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,uv_index' +
+      '&daily=temperature_2m_max,temperature_2m_min&wind_speed_unit=ms&timezone=auto&forecast_days=3';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    if (!j.current || !j.hourly) throw new Error('bad response');
+    G.wx = j; G.wxKey = key; G.wxAt = Date.now();
+  } catch (e) {
+    G.wxError = '天気を取得できませんでした。通信状況を確認して、もう一度お試しください。';
+  }
+  G.wxLoading = false;
+  G.skyKey = G.skyKey; updateSky(); render();
+}
+
+/* ---------- コーデの提案ロジック ---------- */
+const OUTER = {
+  heavy: { casual: ['ダウンジャケット', 'ボアブルゾン'], clean: ['ウールロングコート', 'ダウンコート'], office: ['ウールチェスターコート', 'ダウンコート'], outdoor: ['インサレーションダウン', '厚手マウンテンパーカ'] },
+  coat: { casual: ['中綿ジャケット', 'ダッフルコート'], clean: ['ウールコート', 'キルティングコート'], office: ['ステンカラーコート', 'ウールコート'], outdoor: ['フリース ＋ シェルジャケット', '中綿ジャケット'] },
+  mid: { casual: ['マウンテンパーカ', 'デニムジャケット'], clean: ['トレンチコート', 'ノーカラージャケット'], office: ['トレンチコート', 'テーラードジャケット'], outdoor: ['ソフトシェルジャケット', 'フリースジャケット'] },
+  light: { casual: ['薄手パーカ', 'シャツジャケット'], clean: ['カーディガン', '薄手ジャケット'], office: ['カーディガン', '薄手テーラードジャケット'], outdoor: ['ウィンドブレーカー', '薄手フリース'] }
+};
+const TOPS = [
+  { casual: ['厚手ニット ＋ 保温インナー', '裏起毛スウェット ＋ 保温インナー'], clean: ['タートルネックニット ＋ 保温インナー', '厚手ニット ＋ 保温インナー'], office: ['ニット ＋ 長袖シャツ ＋ 保温インナー', 'タートルネックニット ＋ 保温インナー'], outdoor: ['フリース ＋ 保温ベースレイヤー', 'ウールシャツ ＋ ベースレイヤー'] },
+  { casual: ['スウェット ＋ 長袖Tシャツ', 'ニット ＋ 長袖Tシャツ'], clean: ['ニット ＋ 長袖シャツ', 'ハイゲージニット'], office: ['ニット ＋ 長袖シャツ', 'ニットベスト ＋ 長袖シャツ'], outdoor: ['薄手フリース ＋ 長袖Tシャツ', 'ウールシャツ ＋ 長袖Tシャツ'] },
+  { casual: ['薄手スウェット', '長袖Tシャツ ＋ シャツ'], clean: ['薄手ニット', 'シャツ ＋ ニットベスト'], office: ['薄手ニット ＋ 長袖シャツ', '長袖シャツ ＋ ニットベスト'], outdoor: ['長袖Tシャツ ＋ 薄手シャツ', '速乾長袖シャツ'] },
+  { casual: ['長袖Tシャツ', '薄手シャツ'], clean: ['長袖シャツ', '薄手カットソー'], office: ['長袖シャツ', '薄手の長袖シャツ'], outdoor: ['速乾長袖Tシャツ', '薄手シャツ'] },
+  { casual: ['半袖Tシャツ', 'ポロシャツ'], clean: ['半袖シャツ', '五分袖カットソー'], office: ['半袖シャツ', 'ビズポロ'], outdoor: ['速乾半袖Tシャツ', '半袖シャツ'] },
+  { casual: ['ゆったり半袖Tシャツ', 'リネンシャツ'], clean: ['リネンシャツ', 'ノースリーブ ＋ 薄手シャツ'], office: ['クールビズ半袖シャツ', 'リネン混シャツ'], outdoor: ['吸汗速乾Tシャツ', 'メッシュTシャツ'] }
+];
+const BOTTOMS = [
+  { casual: ['裏起毛パンツ', '厚手デニム'], clean: ['ウールパンツ', '厚手ロングスカート ＋ タイツ'], office: ['厚手ウールスラックス', '裏地付きスラックス'], outdoor: ['裏地付きトレッキングパンツ', '厚手クライミングパンツ'] },
+  { casual: ['デニム', 'チノパン'], clean: ['センタープレスパンツ', 'ロングスカート'], office: ['ウールスラックス', 'チノスラックス'], outdoor: ['トレッキングパンツ', 'ストレッチパンツ'] },
+  { casual: ['ショートパンツ', '薄手チノパン'], clean: ['リネンパンツ', '薄手ロングスカート'], office: ['薄手スラックス', 'クールビズスラックス'], outdoor: ['速乾ショーツ', '薄手トレッキングパンツ'] }
+];
+const BOTTOM_NOTE = { casual: '動きやすいリラックスシルエット。', clean: 'すっきり見えるきれいめライン。', office: 'オフィス向けのきれいめなシルエット。', outdoor: '動きやすく乾きやすい素材。' };
+const COMBOS = [[0, 0, 0], [1, 0, 1], [0, 1, 1], [1, 1, 0]];
+
+function analyze() {
+  const wx = G.wx, H = wx.hourly;
+  const nowH = parseInt(wx.current.time.slice(11, 13), 10);
+  const oh = parseInt(S.out.slice(0, 2), 10) || 0;
+  const bh = parseInt(S.back.slice(0, 2), 10) || 0;
+  const i0 = oh;
+  const i1 = Math.min(i0 + (((bh - oh + 24) % 24) || 1), H.time.length - 1);
+  let minF = Infinity, maxF = -Infinity, minT = Infinity, maxT = -Infinity, pMax = 0, mmMax = 0, iCold = i0, iHot = i0;
+  let thunder = false, rainy = false, snowy = false, uvMax = 0;
+  for (let i = i0; i <= i1; i++) {
+    const f = H.apparent_temperature[i], t = H.temperature_2m[i];
+    if (f < minF) { minF = f; iCold = i; }
+    if (f > maxF) maxF = f;
+    if (t < minT) minT = t;
+    if (t > maxT) { maxT = t; iHot = i; }
+    pMax = Math.max(pMax, H.precipitation_probability[i] || 0);
+    mmMax = Math.max(mmMax, H.precipitation[i] || 0);
+    uvMax = Math.max(uvMax, H.uv_index[i] || 0);
+    const c = wcat(H.weather_code[i]);
+    if (c === 'thunder') thunder = true;
+    if (c === 'rain') rainy = true;
+    if (c === 'snow') snowy = true;
+  }
+  const wet = thunder || rainy || pMax >= 60;
+  const adj = ({ cold: -3, normal: 0, hot: 3 }[S.sens] || 0) + ({ walk: 0, bike: -2, train: 0, car: 2 }[S.move] || 0) + (wet ? -1 : 0);
+  return { nowH, oh, bh, i0, i1, minF, maxF, minT, maxT, pMax, mmMax, uvMax, iCold, iHot, thunder, rainy, snowy, wet, diff: R(maxT) - R(minT), E: minF + adj, D: maxF + adj };
+}
+
+function outfit(a) {
+  const H = G.wx.hourly, taste = S.taste, combo = COMBOS[G.variant % COMBOS.length];
+  const pick = (arr, n) => arr[n % arr.length];
+  const hh = (i) => pad2(i % 24) + ':00';
+  const wind = G.wx.current.wind_speed_10m, wdir = windDir(G.wx.current.wind_direction_10m);
+  const tOut = R(H.temperature_2m[a.i0]), fOut = R(H.apparent_temperature[a.i0]);
+  const tBack = R(H.temperature_2m[a.i1]);
+  const SOLID = 'background: var(--solid); color: var(--on-solid);', SOFT = 'background: var(--glass-3);';
+
+  /* アウター */
+  const tier = a.E < 3 ? 'heavy' : a.E < 9 ? 'coat' : a.E < 14 ? 'mid' : a.E < 19 ? 'light' : 'none';
+  let oName, oReason, oTag, oTagStyle;
+  if (tier === 'none') {
+    oName = a.wet ? (a.thunder ? '撥水フード付きジャケット' : '薄手のレインジャケット') : pick(['アウターなし', '薄手の羽織りをバッグに'], combo[0]);
+    oReason = a.wet ? '気温は高めですが雨の予報。濡れても乾きやすい薄手の一枚を。' : '外出中の体感は' + R(a.minF) + '°以上。羽織りなしで快適に過ごせます。';
+    oTag = a.wet ? '雨のとき' : '不要'; oTagStyle = SOFT;
+  } else {
+    oName = pick(OUTER[tier][taste], combo[0]);
+    if (a.thunder) { oName = '撥水フード付きジャケット'; oReason = '強い雨と突風の予報。両手が空くフード付きが安心です。'; }
+    else if (a.wet && !a.snowy) { if (tier !== 'heavy') oName = '撥水' + oName; oReason = '雨で体感が下がります。水をはじく素材のアウターを。'; }
+    else {
+      const when = a.iCold === a.i0 ? '出発時' : a.iCold === a.i1 ? '帰宅時' : hh(a.iCold) + 'ごろ';
+      oReason = when + 'は' + R(H.temperature_2m[a.iCold]) + '°（体感' + R(a.minF) + '°）。' + (wind >= 4 ? wdir + 'の風があるので' : '') + (tier === 'heavy' ? 'しっかり防寒を。' : tier === 'light' ? '軽い羽織りを。' : '羽織りを。');
+    }
+    const partTime = a.D >= 19 && !a.wet;
+    oTag = partTime ? '朝・夜' : '終日'; oTagStyle = partTime ? SOLID : SOFT;
+  }
+
+  /* トップス */
+  const ti = a.D < 8 ? 0 : a.D < 14 ? 1 : a.D < 19 ? 2 : a.D < 24 ? 3 : a.D < 28 ? 4 : 5;
+  const tName = pick(TOPS[ti][taste], combo[1]);
+  const tReason = '日中は' + R(a.maxT) + '°まで上がります。' + (a.diff >= 7 && ti < 4 ? '厚手より重ね着で調整を。' : ti <= 1 ? '保温性のあるインナーで暖かく。' : ti >= 4 ? '通気性のよい素材で涼しく。' : '一枚で調整しやすい厚さを。');
+
+  /* ボトムス */
+  const bi = a.D < 10 ? 0 : a.D < 22 ? 1 : 2;
+  const bName = pick(BOTTOMS[bi][taste], combo[2]);
+  const bReason = BOTTOM_NOTE[taste] + (a.wet ? '裾が濡れにくい丈を。' : bi === 0 ? '風を通しにくい素材を。' : bi === 2 ? '風通しのよい薄手素材を。' : S.move === 'bike' ? '自転車でも動きやすいものを。' : '');
+
+  /* 小物 */
+  let aName, aReason, aTag = '終日', aTagStyle = SOFT;
+  const eveBack = (a.bh >= 17 || a.bh < 5) && tBack <= tOut + 2;
+  if (a.thunder) { aName = '防水シューズ ＋ 丈夫な傘'; aReason = '雷雨の予報です。屋外では無理をせず、建物の中へ。'; }
+  else if (a.snowy) { aName = '滑りにくい靴 ＋ 手袋'; aReason = '雪の予報です。足元と指先の防寒を。'; }
+  else if (a.wet) { aName = '防水シューズ ＋ ' + (S.move === 'bike' ? 'レインウェア' : '傘'); aReason = '降水確率は最大' + R(a.pMax) + '%。濡れにくい足元で。'; }
+  else if (a.E < 5) { aName = 'マフラー ＋ 手袋'; aReason = '体感は' + R(a.minF) + '°まで下がります。首元と手先をしっかり防寒。'; }
+  else if (a.E < 10 && S.move === 'bike') { aName = '手袋 ＋ ネックウォーマー'; aReason = '自転車は風で体感が下がります。指先と首元を守りましょう。'; }
+  else if (a.E < 13) {
+    aName = '薄手のストール'; aTag = eveBack ? '夜' : '朝'; aTagStyle = SOLID;
+    aReason = eveBack ? '帰宅時（' + S.back + '）は' + tBack + '°。首元をあたためると快適です。' : '出発時（' + S.out + '）は' + tOut + '°（体感' + fOut + '°）。首元をあたためると快適です。';
+  }
+  else if (a.D >= 28) { aName = '帽子 ＋ 飲みもの'; aReason = '暑さが厳しい時間帯があります。日差し対策と水分補給を。'; aTag = '日中'; }
+  else if (a.uvMax >= 6) { aName = '帽子・サングラス'; aReason = 'UV指数が' + R(a.uvMax) + 'まで上がります。日焼け対策を。'; aTag = '日中'; }
+  else if (a.diff >= 7) { aName = '薄手の羽織りをバッグに'; aReason = '寒暖差が' + a.diff + '°あります。脱ぎ着で調整できるように。'; }
+  else { aName = 'お好みの小物で'; aReason = '気温は安定しています。特別な対策はいりません。'; }
+
+  /* 見出し */
+  let headline;
+  if (a.thunder) headline = '雷雨の予報です。\n外出は短めに、フード付きの撥水アウターで。';
+  else if (a.snowy) headline = '雪の予報です。\n滑りにくい靴としっかりした防寒を。';
+  else if (a.wet) headline = a.E < 19 ? '雨で体感はさらに低め。\n撥水アウターと濡れにくい足元で。' : '雨の予報です。\n濡れても乾きやすい服と足元で。';
+  else if (a.E < 5) headline = '厳しい寒さです。\nしっかり防寒して出かけましょう。';
+  else if (a.diff >= 7 && a.E < 19) headline = '朝晩はひんやり。\n脱ぎ着しやすい重ね着がおすすめです。';
+  else if (a.E < 12) headline = '肌寒い一日。\n首元と足元の防寒を意識して。';
+  else if (a.D >= 28) headline = '暑い一日です。\n通気性のよい服と水分補給を。';
+  else if (a.D >= 22) headline = '過ごしやすい陽気。\n軽めの服装で快適に。';
+  else headline = 'おだやかな気温です。\n羽織り一枚でちょうどよく。';
+
+  let umbrella;
+  if (a.thunder) umbrella = '丈夫な傘と防水の靴を';
+  else if (a.pMax >= 50 || a.rainy) umbrella = '傘を忘れずに';
+  else if (a.pMax >= 30) umbrella = '折りたたみ傘があると安心';
+  else umbrella = '傘は不要です';
+  const umbrellaSub = '（降水確率 ' + R(a.pMax) + '%' + (a.thunder ? ' · 落雷の可能性' : a.mmMax >= 1 ? ' · 1時間に' + R(a.mmMax) + 'mm' : '') + '）';
+
+  return { headline, umbrella, umbrellaSub, rows: [
+    { kind: 'outer', cat: 'アウター', name: oName, reason: oReason, tag: oTag, tagStyle: oTagStyle },
+    { kind: 'tops', cat: 'トップス', name: tName, reason: tReason, tag: '終日', tagStyle: SOFT },
+    { kind: 'bottoms', cat: 'ボトムス', name: bName, reason: bReason, tag: '終日', tagStyle: SOFT },
+    { kind: 'acc', cat: '小物', name: aName, reason: aReason, tag: aTag, tagStyle: aTagStyle }
+  ] };
+}
+
+/* ---------- 共通パーツ ---------- */
+const GLASS = 'background: var(--glass); -webkit-backdrop-filter: blur(28px) saturate(160%); backdrop-filter: blur(28px) saturate(160%); border: 1px solid var(--border); box-shadow: 0 20px 60px var(--shadow), inset 0 1px 0 var(--hi);';
+const PILL = 'background: var(--glass); border: 1px solid var(--border); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);';
+const IC = {
+  pin: (s) => '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>',
+  arrow: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>',
+  umbrella: (s) => '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--accent)"><path d="M3 12a9 9 0 0 1 18 0z"></path><path d="M12 12v6a2 2 0 0 1-4 0"></path></svg>',
+  spinner: '<svg class="spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.6"></path></svg>',
+  outer: '<path d="M8 3L4.5 5 3 12l2 1 1-3v11h12V10l1 3 2-1-1.5-7L16 3l-4 5z"></path><path d="M12 8v13"></path>',
+  tops: '<path d="M8 3q4 3 8 0l5 4-2 4-2-1v11H7V10l-2 1-2-4z"></path><path d="M7 14h10"></path>',
+  bottoms: '<path d="M6 3h12l1 18h-5l-2-12-2 12H5z"></path><path d="M6 6h12"></path>',
+  acc: '<path d="M5 5q7 5 14 0v4q-7 5-14 0z"></path><path d="M14 10.5l1 9.5 3-1-1.5-9.5"></path>'
+};
+const ROW_COLOR = { outer: 'background: var(--accent-soft); color: var(--accent)', tops: 'background: rgba(242,163,58,0.18); color: var(--c-amber)', bottoms: 'background: rgba(110,86,207,0.18); color: var(--c-violet)', acc: 'background: rgba(28,150,136,0.18); color: var(--c-teal)' };
+
+function wxIcon(code, isDay, size) {
+  const cat = wcat(code);
+  const open = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 64 64" fill="none" role="img" aria-label="' + wlabel(code) + '">';
+  const moon = '<path d="M38 10a22 22 0 1 0 16 36A18 18 0 0 1 38 10z" fill="#f4efd9"></path><circle cx="14" cy="14" r="1.6" fill="#ffffff"></circle><circle cx="52" cy="20" r="1.2" fill="#ffffff"></circle><circle cx="22" cy="6" r="1" fill="#ffffff"></circle>';
+  if (cat === 'clear') return open + (isDay ? '<circle cx="32" cy="32" r="13" fill="#ffc46b"></circle><path d="M32 8v6M32 50v6M8 32h6M50 32h6M15 15l4.2 4.2M44.8 44.8L49 49M15 49l4.2-4.2M44.8 19.2L49 15" stroke="#f2a33a" stroke-width="3" stroke-linecap="round"></path>' : moon) + '</svg>';
+  if (cat === 'partly') return open + (isDay ? '<circle cx="24" cy="24" r="10" fill="#ffc46b"></circle><path d="M24 6v4M24 38v4M6 24h4M38 24h4M11.3 11.3l2.8 2.8M33.9 33.9l2.8 2.8M11.3 36.7l2.8-2.8M33.9 14.1l2.8-2.8" stroke="#f2a33a" stroke-width="2.5" stroke-linecap="round"></path>' : '<path d="M30 6a15 15 0 1 0 11 24A12 12 0 0 1 30 6z" fill="#f4efd9"></path>') + '<path d="M22 52h26a9 9 0 0 0 0-18 12 12 0 0 0-23 3 7.5 7.5 0 0 0-3 15z" fill="rgba(255,255,255,0.92)" stroke="#c9d6ea" stroke-width="1.5"></path></svg>';
+  if (cat === 'cloudy') return open + '<path d="M16 48h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="rgba(255,255,255,0.92)" stroke="#c9d6ea" stroke-width="1.5"></path></svg>';
+  if (cat === 'rain') return open + '<path d="M16 40h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="#e3e8f0" stroke="#b4c0d3" stroke-width="1.5"></path><path d="M24 46l-3 8M34 46l-3 8M44 46l-3 8" stroke="#5b8cff" stroke-width="3" stroke-linecap="round"></path></svg>';
+  if (cat === 'snow') return open + '<path d="M16 40h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="#e3e8f0" stroke="#b4c0d3" stroke-width="1.5"></path><circle cx="22" cy="49" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle><circle cx="32" cy="54" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle><circle cx="42" cy="49" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle></svg>';
+  return open + '<path d="M16 38h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="#c9d0dc" stroke="#9aa6ba" stroke-width="1.5"></path><path d="M34 40l-9 12h7l-3 9 11-14h-7l3-7z" fill="#ffc94a"></path><path d="M20 44l-2 6M48 44l-2 6" stroke="#5b8cff" stroke-width="3" stroke-linecap="round"></path></svg>';
+}
+const logo = () => '<a href="#/" style="font-size: 28px; font-weight: 700; letter-spacing: -0.04em; color: var(--fg); text-decoration: none">kion<span style="color: var(--accent)">.</span></a>';
+function steps(n) {
+  const on = 'padding: 8px 16px; border-radius: 999px; background: var(--solid); color: var(--on-solid); font-weight: 600', off = 'padding: 8px 16px; border-radius: 999px; color: var(--sub)';
+  return '<ol class="steps" aria-label="進行状況" style="list-style: none; margin: 0; padding: 6px; display: flex; gap: 4px; border-radius: 999px; ' + PILL + ' font-size: 14px">' +
+    ['1 地域', '2 体感・好み', '3 完了'].map((t, i) => '<li' + (i + 1 === n ? ' aria-current="step"' : '') + ' style="' + (i + 1 === n ? on : off) + '">' + t + '</li>').join('') + '</ol>';
+}
+
+/* ---------- 01 ウェルカム ---------- */
+function viewMain() {
+  let pv = { place: '小倉北区', out: '08:00', icon: wxIcon(2, 1, 88), temp: '14°', line: '体感 11° · 晴れ時々くもり', chips: ['トレンチコート', '薄手ニット', 'ウールスラックス', 'ストール'], umb: '今日は傘いりません', diff: '寒暖差 9°', diffNote: '重ね着がおすすめ', sample: true };
+  if (S.done && S.place && G.wx) {
+    const a = analyze(), o = outfit(a), c = G.wx.current;
+    pv = { place: S.place.name, out: S.out, icon: wxIcon(c.weather_code, c.is_day, 88), temp: R(c.temperature_2m) + '°', line: '体感 ' + R(c.apparent_temperature) + '° · ' + wlabel(c.weather_code), chips: o.rows.map((r) => r.name), umb: o.umbrella, diff: '寒暖差 ' + a.diff + '°', diffNote: a.diff >= 7 ? '重ね着がおすすめ' : '気温は安定', sample: false };
+  }
+  const num = (n) => '<span style="width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--glass-3); font-family: \'Inter\', sans-serif; font-weight: 600; font-size: 12px; color: var(--fg)">' + n + '</span>';
+  const feat = (icon, h, p) => '<article style="flex: 1 1 280px; min-width: 0; padding: 28px; box-sizing: border-box; border-radius: 24px; ' + PILL.replace('20px', '24px').replace('20px', '24px') + ' display: flex; flex-direction: column; gap: 10px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--accent)">' + icon + '</svg><h2 style="margin: 0; font-size: 18px; font-weight: 700">' + h + '</h2><p style="margin: 0; font-size: 15px; line-height: 1.7; color: var(--sub)">' + p + '</p></article>';
+  return '<div class="wrap" style="max-width: 1200px">' +
+  '<header style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 28px 0">' + logo() +
+    (S.done ? '<nav aria-label="ホーム" style="display: flex; align-items: center; gap: 12px"><a href="#/home" style="min-height: 44px; display: inline-flex; align-items: center; padding: 0 20px; border-radius: 999px; ' + PILL + ' color: var(--fg); text-decoration: none; font-size: 15px; font-weight: 500">ホームを開く</a></nav>' : '') +
+  '</header>' +
+  '<main style="display: flex; flex-wrap: wrap; align-items: center; gap: 56px; padding-top: 48px">' +
+    '<section style="flex: 1 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 28px">' +
+      '<span style="align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px; ' + PILL + ' font-size: 14px; font-weight: 500; color: var(--accent)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>気温から、今日の服を。</span>' +
+      '<h1 class="h-hero">今日の気温に、<br>ちょうどいい服を。</h1>' +
+      '<p style="margin: 0; max-width: 520px; font-size: 18px; line-height: 1.8; color: var(--sub)">現在地の天気と、あなたの体感・外出時間をもとに、毎朝ぴったりの服装をレイヤーごとにご提案します。</p>' +
+      '<div style="display: flex; flex-wrap: wrap; gap: 12px; padding-top: 8px">' +
+        '<a href="' + (S.done ? '#/home' : '#/location') + '" style="min-height: 56px; display: inline-flex; align-items: center; gap: 10px; padding: 0 32px; border-radius: 999px; background: var(--solid); color: var(--on-solid); text-decoration: none; font-size: 17px; font-weight: 600; box-shadow: 0 10px 30px var(--shadow)">' + (S.done ? '今日のコーデを見る' : 'はじめる') + IC.arrow + '</a>' +
+        '<button type="button" data-act="sync" style="min-height: 56px; display: inline-flex; align-items: center; padding: 0 28px; border-radius: 999px; ' + PILL + ' color: var(--fg); font: inherit; font-size: 17px; font-weight: 500; cursor: pointer">設定を引き継ぐ</button>' +
+      '</div>' +
+      '<ol aria-label="設定の流れ" style="list-style: none; margin: 0; padding: 12px 0 0; display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--sub)">' +
+        '<li style="display: flex; align-items: center; gap: 8px">' + num(1) + '地域を設定</li><li style="display: flex; align-items: center; gap: 8px">' + num(2) + '体感・好みを設定</li><li style="display: flex; align-items: center; gap: 8px">' + num(3) + '今日のコーデを確認</li></ol>' +
+    '</section>' +
+    '<section aria-label="' + (pv.sample ? 'アプリのプレビュー（サンプル）' : '今日のプレビュー') + '" style="flex: 1 1 420px; min-width: 0; position: relative; display: flex; justify-content: center; padding: 56px 0 40px">' +
+      '<div style="width: 100%; max-width: 440px; padding: 32px; box-sizing: border-box; border-radius: 32px; ' + GLASS + ' display: flex; flex-direction: column; gap: 24px">' +
+        '<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; color: var(--sub)"><span style="display: inline-flex; align-items: center; gap: 6px">' + IC.pin(16) + esc(pv.place) + '</span><span>' + (pv.sample ? 'サンプル · ' : '') + esc(pv.out) + ' 出発</span></div>' +
+        '<div style="display: flex; align-items: center; gap: 16px">' + pv.icon + '<div style="display: flex; flex-direction: column"><span style="font-family: \'Inter\', sans-serif; font-size: 80px; font-weight: 200; line-height: 1; letter-spacing: -0.04em">' + pv.temp + '</span><span style="font-size: 15px; color: var(--sub)">' + esc(pv.line) + '</span></div></div>' +
+        '<div style="height: 1px; background: var(--line)"></div>' +
+        '<div style="display: flex; flex-direction: column; gap: 12px"><span style="font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--sub)">今日のコーデ</span><div style="display: flex; flex-wrap: wrap; gap: 8px">' +
+          pv.chips.map((c) => '<span style="padding: 8px 14px; border-radius: 999px; background: var(--glass-3); font-size: 14px; font-weight: 500">' + esc(c) + '</span>').join('') + '</div></div>' +
+      '</div>' +
+      '<div style="position: absolute; right: 0; bottom: 8px; display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-radius: 20px; ' + PILL.replace('20px', '24px').replace('20px', '24px') + ' box-shadow: 0 12px 32px var(--shadow); font-size: 14px; font-weight: 500">' + IC.umbrella(20) + esc(pv.umb) + '</div>' +
+      '<div style="position: absolute; left: 0; top: 16px; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 18px; ' + PILL.replace('20px', '24px').replace('20px', '24px') + ' box-shadow: 0 12px 32px var(--shadow); font-size: 14px; font-weight: 500"><span style="font-family: \'Inter\', sans-serif; font-weight: 600; color: var(--accent)">' + pv.diff + '</span>' + pv.diffNote + '</div>' +
+    '</section>' +
+  '</main>' +
+  '<section aria-label="特長" style="display: flex; flex-wrap: wrap; gap: 20px; padding-top: 56px">' +
+    feat('<path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"></path><path d="M12 9v7"></path>', '体感温度で判断', '気温だけでなく、風・湿度、あなたの寒がり度まで加味します。') +
+    feat('<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>', '外出時間に合わせて', '出発と帰宅の時刻の気温から、一日中快適な組み合わせに。') +
+    feat('<path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path>', 'いまの空が背景に', '朝焼け・青空・夕暮れ・星空、雨や雷まで。窓の外と同じ空を映します。') +
+  '</section></div>';
+}
+
+/* ---------- 02 地域設定 ---------- */
+function samePlace(a, b) { return a && b && !a.geo && !b.geo && a.lat === b.lat && a.lon === b.lon; }
+function placeListHtml() {
+  let items, note = '';
+  if (G.query.trim()) {
+    if (G.results === null) return '<p role="status" style="margin: 0; padding: 8px 4px; font-size: 14px; color: var(--sub)">検索中…</p>';
+    if (G.results === 'error') return '<p role="status" style="margin: 0; padding: 8px 4px; font-size: 14px; color: var(--sub)">検索できませんでした。通信状況を確認してください。</p>';
+    if (!G.results.length) return '<p role="status" style="margin: 0; padding: 8px 4px; font-size: 14px; color: var(--sub)">「' + esc(G.query.trim()) + '」に一致する地域が見つかりませんでした。市区町村名でお試しください。</p>';
+    items = G.results;
+  } else {
+    items = [];
+    if (S.place) items.push(S.place);
+    S.recents.concat(SUGGEST).forEach((p) => { if (items.length < 5 && !items.some((q) => samePlace(p, q))) items.push(p); });
+  }
+  const base = 'width: 100%; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 20px; box-sizing: border-box; border-radius: 18px; cursor: pointer; font: inherit; text-align: left; color: var(--fg); ';
+  G.listItems = items;
+  return note + items.map((p, i) => {
+    const sel = S.place && (p === S.place || samePlace(p, S.place));
+    return '<div role="listitem"><button type="button" data-act="pick" data-i="' + i + '" aria-pressed="' + (sel ? 'true' : 'false') + '" style="' + base + (sel ? 'background: var(--accent-soft); border: 1.5px solid var(--accent);' : 'background: var(--glass-2); border: 1.5px solid var(--border);') + '">' +
+      '<span style="display: flex; align-items: center; gap: 14px">' + IC.pin(20) + '<span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; font-weight: 600">' + esc(p.name) + '</span><span style="font-size: 13px; color: var(--sub)">' + esc(p.sub) + '</span></span></span>' +
+      (sel ? '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>' : '') +
+    '</button></div>';
+  }).join('');
+}
+function viewLocation() {
+  return '<div class="wrap" style="max-width: 1200px">' +
+  '<header style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 28px 0">' + logo() + steps(1) + '</header>' +
+  '<main style="display: flex; justify-content: center; padding-top: 24px">' +
+    '<section class="card-pad" style="width: 100%; max-width: 720px; box-sizing: border-box; border-radius: 32px; ' + GLASS + ' display: flex; flex-direction: column; gap: 28px">' +
+      '<div style="display: flex; flex-direction: column; gap: 10px"><span style="font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent)">STEP 1 / 2</span><h1 style="margin: 0; font-size: 36px; line-height: 1.35; font-weight: 700">どこの天気を見ますか？</h1><p style="margin: 0; font-size: 16px; line-height: 1.7; color: var(--sub)">よく外出する地域を設定してください。検索した地域は履歴に残り、あとからいつでも切り替えられます。</p></div>' +
+      '<button type="button" data-act="geo"' + (G.geoBusy ? ' disabled' : '') + ' style="min-height: 64px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 0 28px; border-radius: 20px; border: none; background: var(--solid); color: var(--on-solid); font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; box-shadow: 0 10px 30px var(--shadow)">' +
+        (G.geoBusy ? IC.spinner + '現在地を確認中…' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8z"></path></svg>現在地を使う') + '</button>' +
+      '<p style="margin: -16px 0 0; text-align: center; font-size: 13px; line-height: 1.6; color: var(--muted)">ボタンを押すと、ブラウザが位置情報の利用許可を確認します。<br>位置情報は天気と地名の取得のみに使用し、保存はしません。</p>' +
+      (G.geoMsg ? '<p role="alert" style="margin: -12px 0 0; padding: 12px 16px; border-radius: 16px; background: rgba(255,201,74,0.18); border: 1px solid rgba(255,201,74,0.55); font-size: 14px; line-height: 1.6">' + esc(G.geoMsg) + '</p>' : '') +
+      '<div style="display: flex; align-items: center; gap: 16px; font-size: 14px; color: var(--muted)"><div style="flex: 1 1 0; height: 1px; background: var(--line)"></div>または地域を検索<div style="flex: 1 1 0; height: 1px; background: var(--line)"></div></div>' +
+      '<div style="display: flex; flex-direction: column; gap: 8px"><label for="place-search" style="font-size: 14px; font-weight: 600">地域名・駅名</label>' +
+        '<div style="display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 20px; border-radius: 18px; background: var(--glass-2); border: 1px solid var(--border); color: var(--sub)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>' +
+        '<input id="place-search" type="search" autocomplete="off" value="' + esc(G.query) + '" placeholder="例：小倉、博多、天神" style="flex: 1 1 auto; min-width: 0; border: none; outline: none; background: transparent; font: inherit; font-size: 16px; color: var(--fg)"></div></div>' +
+      '<div id="place-list" role="list" aria-label="候補の地域" style="display: flex; flex-direction: column; gap: 8px">' + placeListHtml() + '</div>' +
+      (G.needPlace ? '<p role="alert" style="margin: 0; font-size: 14px; font-weight: 600; color: var(--accent)">地域を選ぶか、「現在地を使う」を押してください。</p>' : '') +
+      '<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 8px">' +
+        '<a href="' + (S.done ? '#/home' : '#/') + '" style="min-height: 52px; display: inline-flex; align-items: center; padding: 0 24px; border-radius: 999px; background: var(--glass-2); border: 1px solid var(--border); color: var(--fg); text-decoration: none; font-size: 16px; font-weight: 500">戻る</a>' +
+        '<button type="button" data-act="loc-next" style="min-height: 52px; display: inline-flex; align-items: center; gap: 10px; padding: 0 32px; border-radius: 999px; border: none; background: var(--solid); color: var(--on-solid); font: inherit; font-size: 16px; font-weight: 600; cursor: pointer">' + (S.done ? 'この地域で見る' : '次へ') + IC.arrow + '</button>' +
+      '</div>' +
+    '</section></main></div>';
+}
+/* 大きな都市は Open-Meteo、駅名・町名は OpenStreetMap (Nominatim) で探して合わせる */
+async function searchPlaces(q) {
+  const r4 = (n) => R(n * 10000) / 10000;
+  const uniq = (arr, name) => arr.filter((x, i) => x && x !== name && arr.indexOf(x) === i).join(' · ');
+  const om = async (name, minPop) => {
+    try {
+      const j = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=5&language=ja&format=json&name=' + encodeURIComponent(name))).json();
+      return (j.results || []).filter((r) => (r.population || 0) >= minPop).map((r) => ({ name: r.name, sub: uniq([/^[\x00-\x7f]+$/.test(r.admin2 || '') ? '' : r.admin2, r.admin1, r.country], r.name), lat: r4(r.latitude), lon: r4(r.longitude) }));
+    } catch (e) { return null; }
+  };
+  const osm = async () => {
+    try {
+      const j = await (await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&accept-language=ja&q=' + encodeURIComponent(q))).json();
+      return j.map((r) => {
+        const a = r.address || {};
+        const name = (r.name || q) + (r.addresstype === 'railway' && !/駅$/.test(r.name || '') ? '駅' : '');
+        return { name: name, sub: uniq([a.suburb, a.city || a.town || a.village || a.county, a.province || a.state, a.country_code === 'jp' ? '' : a.country], r.name), lat: r4(+r.lat), lon: r4(+r.lon) };
+      });
+    } catch (e) { return null; }
+  };
+  const parts = await Promise.all([om(q, 50000), /[市区町村]$/.test(q) ? [] : om(q + '市', 50000), osm(), om(q, 0)]);
+  if (parts.every((p) => p === null)) throw new Error('search failed');
+  const out = [];
+  parts.forEach((p) => (p || []).forEach((x) => {
+    if (out.length < 6 && isFinite(x.lat) && isFinite(x.lon) && !out.some((y) => (y.name === x.name && y.sub === x.sub) || (Math.abs(y.lat - x.lat) < 0.02 && Math.abs(y.lon - x.lon) < 0.02))) out.push(x);
+  }));
+  return out;
+}
+let searchTimer = 0, searchSeq = 0;
+function onSearchInput(v) {
+  G.query = v;
+  clearTimeout(searchTimer);
+  const list = document.getElementById('place-list');
+  if (!v.trim()) { G.results = null; if (list) list.innerHTML = placeListHtml(); return; }
+  G.results = null;
+  if (list) list.innerHTML = placeListHtml();
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    let out;
+    try { out = await searchPlaces(v.trim()); } catch (e) { out = 'error'; }
+    if (seq !== searchSeq || G.query !== v) return;
+    G.results = out;
+    const el = document.getElementById('place-list');
+    if (el) el.innerHTML = placeListHtml();
+  }, 600);
+}
+
+/* ---------- 03 体感・好み設定 ---------- */
+function viewPreference() {
+  const on = 'background: var(--solid); color: var(--on-solid); border: 1.5px solid var(--solid);', off = 'background: var(--glass-2); color: var(--fg); border: 1.5px solid var(--border);';
+  const card = 'flex: 1 1 140px; min-height: 112px; padding: 18px 20px; box-sizing: border-box; border-radius: 22px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; cursor: pointer; font: inherit; text-align: left; ';
+  const chip = 'min-height: 48px; padding: 0 22px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 15px; font-weight: 500; ';
+  const sec = 'min-width: 0; padding: 32px; box-sizing: border-box; border-radius: 28px; ' + GLASS.replace('0 20px 60px', '0 16px 48px') + ' display: flex; flex-direction: column; gap: 18px';
+  const sensDesc = { cold: '一枚多めにご提案', normal: '標準の目安でご提案', hot: '軽めの服装でご提案' };
+  const chips = (key, map) => Object.keys(map).map((id) => '<button type="button" data-act="set" data-k="' + key + '" data-v="' + id + '" aria-pressed="' + (S[key] === id) + '" style="' + chip + (S[key] === id ? on : off) + '">' + map[id] + '</button>').join('');
+  const tin = 'min-height: 56px; padding: 0 16px; border-radius: 16px; border: 1px solid var(--border); background: var(--glass-2); font-family: \'Inter\', sans-serif; font-size: 22px; font-weight: 500; color: var(--fg)';
+  return '<div class="wrap" style="max-width: 1200px; padding-bottom: 56px">' +
+  '<header style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 28px 0">' + logo() + steps(2) + '</header>' +
+  '<main style="display: flex; flex-direction: column; gap: 28px; padding-top: 8px">' +
+    '<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px">' +
+      '<div style="display: flex; flex-direction: column; gap: 10px"><span style="font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent)">STEP 2 / 2</span><h1 style="margin: 0; font-size: 36px; line-height: 1.35; font-weight: 700">あなたの体感を教えてください</h1><p style="margin: 0; font-size: 16px; line-height: 1.7; color: var(--sub)">同じ15°でも、感じ方は人それぞれ。設定に合わせて提案する枚数や厚さを調整します。</p></div>' +
+      '<a href="#/location" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: 999px; ' + PILL + ' font-size: 14px; color: var(--sub); text-decoration: none">' + IC.pin(16) + esc(S.place ? S.place.name : '地域を設定') + '</a>' +
+    '</div>' +
+    '<div style="display: flex; flex-wrap: wrap; gap: 20px">' +
+      '<section aria-labelledby="sens-h" style="flex: 1 1 520px; ' + sec + '"><h2 id="sens-h" style="margin: 0; font-size: 18px; font-weight: 700">体感タイプ</h2><div style="display: flex; flex-wrap: wrap; gap: 12px">' +
+        Object.keys(SENS).map((id) => '<button type="button" data-act="set" data-k="sens" data-v="' + id + '" aria-pressed="' + (S.sens === id) + '" style="' + card + (S.sens === id ? on : off) + '"><span style="font-size: 18px; font-weight: 700">' + SENS[id] + '</span><span style="font-size: 14px; color: ' + (S.sens === id ? 'var(--on-solid-sub)' : 'var(--sub)') + '">' + sensDesc[id] + '</span></button>').join('') + '</div></section>' +
+      '<section aria-labelledby="time-h" style="flex: 1 1 360px; ' + sec + '"><h2 id="time-h" style="margin: 0; font-size: 18px; font-weight: 700">外出する時間帯</h2><div style="display: flex; flex-wrap: wrap; gap: 12px">' +
+        '<div style="flex: 1 1 140px; display: flex; flex-direction: column; gap: 8px"><label for="t-out" style="font-size: 14px; font-weight: 600; color: var(--sub)">出発</label><input id="t-out" type="time" value="' + esc(S.out) + '" style="' + tin + '"></div>' +
+        '<div style="flex: 1 1 140px; display: flex; flex-direction: column; gap: 8px"><label for="t-back" style="font-size: 14px; font-weight: 600; color: var(--sub)">帰宅</label><input id="t-back" type="time" value="' + esc(S.back) + '" style="' + tin + '"></div>' +
+        '</div><p style="margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted)">この時間帯の気温差をもとに、重ね着の組み合わせを考えます。</p></section>' +
+      '<section aria-labelledby="move-h" style="flex: 1 1 440px; ' + sec + '"><h2 id="move-h" style="margin: 0; font-size: 18px; font-weight: 700">主な移動手段</h2><div style="display: flex; flex-wrap: wrap; gap: 10px">' + chips('move', MOVE) + '</div></section>' +
+      '<section aria-labelledby="taste-h" style="flex: 1 1 440px; ' + sec + '"><h2 id="taste-h" style="margin: 0; font-size: 18px; font-weight: 700">服装のテイスト</h2><div style="display: flex; flex-wrap: wrap; gap: 10px">' + chips('taste', TASTE) + '</div></section>' +
+    '</div>' +
+    '<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">' +
+      '<a href="#/location" style="min-height: 52px; display: inline-flex; align-items: center; padding: 0 24px; border-radius: 999px; ' + PILL + ' color: var(--fg); text-decoration: none; font-size: 16px; font-weight: 500">戻る</a>' +
+      '<button type="button" data-act="finish" style="min-height: 56px; display: inline-flex; align-items: center; gap: 10px; padding: 0 32px; border-radius: 999px; border: none; background: var(--solid); color: var(--on-solid); font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; box-shadow: 0 10px 30px var(--shadow)">' + (S.done ? '保存して今日のコーデを見る' : '設定を完了して今日のコーデを見る') + IC.arrow + '</button>' +
+    '</div>' +
+  '</main></div>';
+}
+
+/* ---------- 04 ホーム ---------- */
+function chartHtml(a) {
+  const H = G.wx.hourly, last = H.time.length - 1;
+  const start = Math.max(0, a.i0 - 2), end = Math.min(last, a.i1 + 2);
+  const step = Math.max(1, Math.ceil((end - start) / 8));
+  const set = new Set([a.i0, a.i1, a.iHot]);
+  for (let i = start; i <= end; i += step) { if (Math.abs(i - a.i0) >= step && Math.abs(i - a.i1) >= step || step === 1) set.add(i); }
+  const idx = Array.from(set).sort((x, y) => x - y);
+  const temps = idx.map((i) => H.temperature_2m[i]);
+  const lo = Math.min.apply(null, temps), hi = Math.max.apply(null, temps), range = (hi - lo) || 1;
+  const num = 'font-family: \'Inter\', sans-serif; ';
+  return idx.map((i) => {
+    const t = H.temperature_2m[i], key = i === a.i0 || i === a.i1;
+    const h = R(20 + ((t - lo) / range) * 90);
+    const bg = key ? 'var(--accent)' : (t - lo) / range >= 0.6 ? 'var(--warm)' : 'var(--bar)';
+    const tag = i === a.i0 ? '<span style="height: 24px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--solid); color: var(--on-solid); font-size: 12px; font-weight: 500">出発</span>'
+      : i === a.i1 ? '<span style="height: 24px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--solid); color: var(--on-solid); font-size: 12px; font-weight: 500">帰宅</span>'
+      : i === a.iHot ? '<span style="height: 24px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: 999px; background: var(--glass-3); font-size: 12px; font-weight: 500">最高</span>'
+      : '<span style="height: 24px"></span>';
+    return '<div role="listitem" style="flex: 1 1 0; min-width: 64px; display: flex; flex-direction: column; align-items: center; gap: 8px">' +
+      '<span style="' + num + 'font-size: 16px; font-weight: 600;' + (key ? ' color: var(--accent)' : '') + '">' + R(t) + '°</span>' +
+      '<div style="width: 100%; max-width: 40px; height: 120px; display: flex; align-items: flex-end"><div style="width: 100%; height: ' + h + 'px; border-radius: 12px; background: ' + bg + '"></div></div>' +
+      '<span style="' + num + 'font-size: 13px; ' + (key ? 'font-weight: 600' : 'color: var(--sub)') + '">' + pad2(i % 24) + ':00</span>' + tag + '</div>';
+  }).join('');
+}
+function homeHeader() {
+  let d = new Date();
+  if (G.wx) { const t = G.wx.current.time; d = new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)); }
+  const date = (d.getMonth() + 1) + '月' + d.getDate() + '日（' + '日月火水木金土'[d.getDay()] + '）';
+  return '<header style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 28px 0">' +
+    '<div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap">' + logo() +
+      '<a href="#/location" aria-label="地域を変更（現在：' + esc(S.place.name) + '）" style="min-height: 44px; display: inline-flex; align-items: center; gap: 8px; padding: 0 18px; border-radius: 999px; ' + PILL + ' color: var(--fg); text-decoration: none; font-size: 15px; font-weight: 500">' + IC.pin(16) + esc(S.place.name) + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></a></div>' +
+    '<div style="display: flex; align-items: center; gap: 12px"><span style="padding: 10px 16px; border-radius: 999px; ' + PILL + ' font-size: 15px; color: var(--fg)">' + date + '</span>' +
+      '<a href="#/preference" aria-label="設定" style="width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; ' + PILL + ' color: var(--fg)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg></a></div></header>';
+}
+function viewHome() {
+  const wrapOpen = '<div class="wrap" style="max-width: 1240px">' + homeHeader();
+  if (!G.wx) {
+    let body;
+    if (G.wxError || (S.place.geo && !G.coords && !G.geoBusy && G.geoMsg)) {
+      body = '<p role="alert" style="margin: 0; font-size: 17px; line-height: 1.7">' + esc(G.wxError || G.geoMsg) + '</p><div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center">' +
+        '<button type="button" data-act="retry" style="min-height: 48px; padding: 0 24px; border-radius: 999px; border: none; background: var(--solid); color: var(--on-solid); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer">もう一度試す</button>' +
+        '<a href="#/location" style="min-height: 48px; display: inline-flex; align-items: center; padding: 0 24px; border-radius: 999px; background: var(--glass-3); border: 1px solid var(--border); color: var(--fg); text-decoration: none; font-size: 15px; font-weight: 600">地域を選びなおす</a></div>';
+    } else {
+      body = '<p role="status" style="margin: 0; display: inline-flex; align-items: center; gap: 12px; font-size: 17px">' + IC.spinner + (S.place.geo && !G.coords ? '現在地を確認中…' : '天気を取得中…') + '</p>';
+    }
+    return wrapOpen + '<main><section class="card-pad" style="border-radius: 32px; ' + GLASS + ' min-height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center">' + body + '</section></main></div>';
+  }
+  const wx = G.wx, c = wx.current, a = analyze(), o = outfit(a);
+  const at = new Date(G.wxAt), updated = pad2(at.getHours()) + ':' + pad2(at.getMinutes());
+  const nowIdx = Math.min(a.nowH, wx.hourly.time.length - 1);
+  const stat = (dt, dd, inter) => '<div style="padding: 16px 18px; border-radius: 20px; background: var(--glass-2); display: flex; flex-direction: column; gap: 4px"><dt style="font-size: 13px; color: var(--sub)">' + dt + '</dt><dd style="margin: 0; ' + (inter ? 'font-family: \'Inter\', sans-serif; ' : '') + 'font-size: 22px; font-weight: 600">' + dd + '</dd></div>';
+  const strong = (v) => '<strong style="font-family: \'Inter\', sans-serif; font-weight: 600; color: var(--fg)">' + v + '</strong>';
+  const tagChip = (t) => '<span style="padding: 6px 12px; border-radius: 999px; background: var(--glass-3); font-size: 13px; font-weight: 500">' + t + '</span>';
+  return wrapOpen +
+  '<main style="display: flex; flex-direction: column; gap: 20px">' +
+    '<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">' +
+      '<section class="card-pad" aria-labelledby="now-h" style="flex: 1 1 400px; min-width: 0; box-sizing: border-box; border-radius: 32px; ' + GLASS + ' display: flex; flex-direction: column; gap: 26px">' +
+        '<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px"><h2 id="now-h" style="margin: 0; font-size: 15px; font-weight: 600; color: var(--sub)">現在の天気</h2>' +
+          '<button type="button" data-act="refresh" aria-label="天気を更新（' + updated + ' 更新）" style="min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; margin: -10px -12px -10px 0; border: none; border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer">' + (G.wxLoading ? '更新中…' : updated + ' 更新') + '<svg' + (G.wxLoading ? ' class="spin"' : '') + ' width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"></path></svg></button></div>' +
+        (a.thunder || wcat(c.weather_code) === 'thunder' ? '<div role="status" style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 16px; background: rgba(255,201,74,0.18); border: 1px solid rgba(255,201,74,0.55); font-size: 14px; font-weight: 600"><svg width="18" height="18" viewBox="0 0 24 24" fill="#ffc94a" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"></path></svg>外出時間に雷雨の予報があります</div>' : '') +
+        (G.wxError ? '<p role="alert" style="margin: 0; font-size: 13px; color: var(--muted)">最新の天気を取得できませんでした。' + updated + ' 時点の情報を表示しています。</p>' : '') +
+        '<div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap">' + wxIcon(c.weather_code, c.is_day, 120) +
+          '<div style="display: flex; flex-direction: column; gap: 4px"><span class="t-big">' + R(c.temperature_2m) + '°</span><span style="font-size: 20px; font-weight: 500">' + wlabel(c.weather_code) + '</span></div></div>' +
+        '<div style="display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 16px; color: var(--sub)"><span>体感 ' + strong(R(c.apparent_temperature) + '°') + '</span><span>最高 ' + strong(R(wx.daily.temperature_2m_max[0]) + '°') + '</span><span>最低 ' + strong(R(wx.daily.temperature_2m_min[0]) + '°') + '</span></div>' +
+        '<dl style="margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">' +
+          stat('降水確率', R(wx.hourly.precipitation_probability[nowIdx] || 0) + '%', true) + stat('湿度', R(c.relative_humidity_2m) + '%', true) +
+          stat('風', c.wind_speed_10m < 0.5 ? 'ほぼ無風' : windDir(c.wind_direction_10m) + ' ' + R(c.wind_speed_10m) + 'm/s') + stat('UV指数', uvLabel(wx.hourly.uv_index[nowIdx])) + '</dl>' +
+      '</section>' +
+      '<section class="card-pad" aria-labelledby="look-h" style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; border-radius: 32px; ' + GLASS + ' display: flex; flex-direction: column; gap: 24px">' +
+        '<div style="display: flex; flex-direction: column; gap: 12px"><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px"><span style="font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent)">今日のおすすめコーデ</span>' +
+          '<div style="display: flex; flex-wrap: wrap; gap: 8px">' + tagChip(SENS[S.sens] + '設定を反映') + tagChip(TASTE[S.taste]) + tagChip(MOVE[S.move]) + '</div></div>' +
+          '<h1 id="look-h" style="margin: 0; font-size: 30px; line-height: 1.45; font-weight: 700; white-space: pre-line">' + o.headline + '</h1></div>' +
+        '<ul aria-live="polite" style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">' +
+          o.rows.map((r) => '<li style="display: flex; align-items: center; gap: 18px; padding: 16px 20px; border-radius: 22px; background: var(--glass-2); border: 1px solid var(--border)">' +
+            '<span style="flex: 0 0 auto; width: 56px; height: 56px; border-radius: 18px; display: inline-flex; align-items: center; justify-content: center; ' + ROW_COLOR[r.kind] + '"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + IC[r.kind] + '</svg></span>' +
+            '<div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 13px; color: var(--sub)">' + r.cat + '</span><span style="font-size: 18px; font-weight: 700">' + esc(r.name) + '</span><span style="font-size: 14px; line-height: 1.6; color: var(--sub)">' + esc(r.reason) + '</span></div>' +
+            '<span style="flex: 0 0 auto; padding: 6px 12px; border-radius: 999px; ' + r.tagStyle + ' font-size: 13px; font-weight: 500">' + r.tag + '</span></li>').join('') + '</ul>' +
+        '<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px">' +
+          '<span style="display: inline-flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 15px; font-weight: 500">' + IC.umbrella(22) + o.umbrella + '<span style="color: var(--sub)">' + o.umbrellaSub + '</span></span>' +
+          '<button type="button" data-act="variant" style="min-height: 48px; display: inline-flex; align-items: center; gap: 8px; padding: 0 22px; border-radius: 999px; border: 1px solid var(--border); background: var(--glass-3); color: var(--fg); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"></path></svg>ほかのコーデを見る</button></div>' +
+      '</section>' +
+    '</div>' +
+    '<section aria-labelledby="day-h" style="padding: 32px 36px; box-sizing: border-box; border-radius: 32px; ' + GLASS + ' display: flex; flex-direction: column; gap: 24px">' +
+      '<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px"><div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap"><h2 id="day-h" style="margin: 0; font-size: 20px; font-weight: 700">外出時間の気温</h2><span style="padding: 6px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 600">寒暖差 ' + a.diff + '°</span></div>' +
+        '<span style="font-size: 14px; color: var(--sub)">' + esc(S.out) + '〜' + esc(S.back) + ' の外出を想定 · <a href="#/preference">時間を変更</a></span></div>' +
+      '<div role="list" tabindex="0" aria-label="時間ごとの気温" style="display: flex; gap: 12px; align-items: flex-end; overflow-x: auto; padding-bottom: 4px">' + chartHtml(a) + '</div>' +
+    '</section>' +
+    '<p style="margin: 0; text-align: center; font-size: 12px; color: var(--muted)">天気データ：<a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · 地名検索：© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></p>' +
+  '</main></div>';
+}
+async function ensureHomeData(force) {
+  if (!S.place) return;
+  if (S.place.geo && !G.coords) {
+    const ok = await useGeo(false);
+    if (!ok) { render(); return; }
+    render();
+  }
+  loadWeather(force);
+}
+
+/* ---------- 設定の引き継ぎ ---------- */
+function exportCode() {
+  const data = { v: 1, sens: S.sens, move: S.move, taste: S.taste, out: S.out, back: S.back, place: S.place, recents: S.recents };
+  return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+}
+function openSync(msg) {
+  const d = document.getElementById('sync');
+  const box = 'width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-2); color: var(--fg); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; resize: vertical';
+  const btn = 'min-height: 44px; padding: 0 20px; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; ';
+  d.innerHTML = '<div style="display: flex; flex-direction: column; gap: 18px">' +
+    '<h2 id="sync-h" style="margin: 0; font-size: 22px; font-weight: 700">設定を引き継ぐ</h2>' +
+    '<p style="margin: 0; font-size: 14px; line-height: 1.7; color: var(--sub)">設定はこのブラウザの中だけに保存されています。別の端末で使うときは、下のコードをコピーして、その端末のこの画面に貼り付けてください。</p>' +
+    (S.done ? '<div style="display: flex; flex-direction: column; gap: 8px"><label for="sync-out" style="font-size: 14px; font-weight: 600">この端末の設定コード</label><textarea id="sync-out" readonly rows="3" style="' + box + '">' + exportCode() + '</textarea><div><button type="button" data-act="sync-copy" style="' + btn + 'border: 1px solid var(--line); background: transparent; color: var(--fg)">コードをコピー</button></div></div>' : '') +
+    '<div style="display: flex; flex-direction: column; gap: 8px"><label for="sync-in" style="font-size: 14px; font-weight: 600">別の端末のコードを貼り付け</label><textarea id="sync-in" rows="3" style="' + box + '"></textarea></div>' +
+    (msg ? '<p role="alert" style="margin: 0; font-size: 14px; font-weight: 600; color: var(--accent)">' + esc(msg) + '</p>' : '') +
+    '<div style="display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px"><button type="button" data-act="sync-close" style="' + btn + 'border: 1px solid var(--line); background: transparent; color: var(--fg)">閉じる</button><button type="button" data-act="sync-import" style="' + btn + 'border: none; background: var(--solid); color: var(--on-solid)">この設定を読み込む</button></div></div>';
+  if (!d.open) d.showModal();
+}
+function importCode(text) {
+  try {
+    const j = JSON.parse(decodeURIComponent(escape(atob(text.trim()))));
+    const okTime = (t) => /^\d{2}:\d{2}$/.test(t);
+    const okPlace = (p) => p && typeof p.name === 'string' && (p.geo === true || (typeof p.lat === 'number' && typeof p.lon === 'number'));
+    if (!SENS[j.sens] || !MOVE[j.move] || !TASTE[j.taste] || !okTime(j.out) || !okTime(j.back) || !okPlace(j.place)) throw 0;
+    const clean = (p) => (p.geo ? { geo: true, name: p.name, sub: String(p.sub || '現在地') } : { name: p.name, sub: String(p.sub || ''), lat: p.lat, lon: p.lon });
+    S = Object.assign({}, DEFAULTS, { sens: j.sens, move: j.move, taste: j.taste, out: j.out, back: j.back, place: clean(j.place), recents: (Array.isArray(j.recents) ? j.recents : []).filter((p) => okPlace(p) && !p.geo).slice(0, 4).map(clean), done: true });
+    save();
+    return true;
+  } catch (e) { return false; }
+}
+
+/* ---------- ルーティングと描画 ---------- */
+function route() {
+  const h = location.hash.replace(/^#\/?/, '');
+  return ['location', 'preference', 'home'].indexOf(h) >= 0 ? h : 'main';
+}
+function render() {
+  const r = route();
+  if ((r === 'home' || r === 'preference') && !S.place) { location.replace('#/location'); return; }
+  const active = document.activeElement, keepId = active && active.id, selS = active && active.selectionStart;
+  document.getElementById('app').innerHTML = r === 'home' ? viewHome() : r === 'location' ? viewLocation() : r === 'preference' ? viewPreference() : viewMain();
+  if (keepId) { const el = document.getElementById(keepId); if (el) { el.focus(); try { if (selS != null) el.setSelectionRange(selS, selS); } catch (e) {} } }
+  updateSky();
+}
+function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
+function onRoute() {
+  const r = route();
+  G.needPlace = false;
+  document.title = { main: 'kion. — 気温から、今日の服を。', location: '地域設定 — kion.', preference: '体感・好み設定 — kion.', home: '今日のコーデ — kion.' }[r];
+  render();
+  window.scrollTo(0, 0);
+  if (r === 'home') ensureHomeData(false);
+  else if (S.place && placeCoords()) loadWeather(false);
+}
+
+document.addEventListener('click', async (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.getAttribute('data-act');
+  if (act === 'geo') {
+    const ok = await useGeo(true);
+    G.needPlace = false;
+    if (ok) { G.query = ''; G.results = null; loadWeather(true); }
+    render();
+  } else if (act === 'pick') {
+    const p = (G.listItems || [])[+el.getAttribute('data-i')];
+    if (!p) return;
+    S.place = p.geo ? p : { name: p.name, sub: p.sub, lat: p.lat, lon: p.lon };
+    if (!p.geo) S.recents = [S.place].concat(S.recents.filter((q) => !samePlace(q, S.place))).slice(0, 4);
+    save(); G.needPlace = false; G.geoMsg = '';
+    render();
+    if (placeCoords()) loadWeather(false);
+  } else if (act === 'loc-next') {
+    if (!S.place) { G.needPlace = true; render(); return; }
+    go(S.done ? '#/home' : '#/preference');
+  } else if (act === 'set') {
+    S[el.getAttribute('data-k')] = el.getAttribute('data-v'); save(); G.variant = 0; render();
+  } else if (act === 'finish') {
+    S.done = true; save(); go('#/home');
+  } else if (act === 'variant') {
+    G.variant++; render();
+  } else if (act === 'refresh' || act === 'retry') {
+    G.geoMsg = ''; G.wxError = ''; render(); ensureHomeData(true);
+  } else if (act === 'sync') {
+    openSync('');
+  } else if (act === 'sync-close') {
+    document.getElementById('sync').close();
+  } else if (act === 'sync-copy') {
+    const t = document.getElementById('sync-out');
+    t.select();
+    try { await navigator.clipboard.writeText(t.value); } catch (e) { try { document.execCommand('copy'); } catch (e2) {} }
+    el.textContent = 'コピーしました';
+  } else if (act === 'sync-import') {
+    const v = document.getElementById('sync-in').value;
+    if (!v.trim()) { openSync('コードを貼り付けてください。'); return; }
+    if (importCode(v)) { document.getElementById('sync').close(); G.wx = null; G.coords = null; go('#/home'); }
+    else openSync('コードを読み取れませんでした。もう一度コピーしてお試しください。');
+  }
+});
+document.addEventListener('input', (ev) => {
+  if (ev.target.id === 'place-search') onSearchInput(ev.target.value);
+});
+document.addEventListener('change', (ev) => {
+  const id = ev.target.id;
+  if ((id === 't-out' || id === 't-back') && /^\d{2}:\d{2}/.test(ev.target.value)) {
+    S[id === 't-out' ? 'out' : 'back'] = ev.target.value.slice(0, 5); save();
+  }
+});
+window.addEventListener('hashchange', onRoute);
+setInterval(() => { G.skyKey = G.skyKey; updateSky(); }, 60000);
+setInterval(() => { if (route() === 'home' && !document.hidden) ensureHomeData(true); }, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && route() === 'home') ensureHomeData(false); });
+onRoute();
+</script>
+</body>
+</html>
