@@ -37,15 +37,22 @@ button,a{-webkit-tap-highlight-color:transparent}
 button:disabled{opacity:0.6;cursor:default}
 dialog{border:1px solid var(--border);border-radius:28px;padding:32px;max-width:520px;width:calc(100% - 48px);box-sizing:border-box;background:var(--dialog);color:var(--fg);font-family:inherit;box-shadow:0 30px 80px rgba(0,0,0,0.4)}
 dialog::backdrop{background:rgba(5,10,25,0.55)}
+#top-btn{position:fixed;right:24px;bottom:24px;z-index:5;min-width:64px;height:64px;padding:0 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:1px solid var(--border);border-radius:999px;background:var(--solid);color:var(--on-solid);font:inherit;font-size:12px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;cursor:pointer;box-shadow:0 12px 32px var(--shadow);opacity:0;visibility:hidden;pointer-events:none;transition:transform .28s cubic-bezier(.2,1.4,.4,1),opacity .25s ease,visibility .25s}
+#top-btn.show{opacity:1;visibility:visible;pointer-events:auto}
+@keyframes top-pant{0%,100%{scale:1}50%{scale:1.08 .92}}
+#top-btn.tired{animation:top-pant .5s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){#top-btn{transition:opacity .25s ease,visibility .25s}#top-btn.tired{animation:none}}
+@media (max-width: 640px){#top-btn{right:16px;bottom:16px}}
 @keyframes kion-rain{from{transform:translate3d(0,-160px,0) rotate(12deg)}to{transform:translate3d(-330px,1500px,0) rotate(12deg)}}
 @keyframes kion-drift{from{transform:translateX(-6%)}to{transform:translateX(6%)}}
 @keyframes kion-twinkle{0%,100%{opacity:0.25}50%{opacity:1}}
 @keyframes kion-glow{0%,100%{transform:scale(1);opacity:0.92}50%{transform:scale(1.05);opacity:1}}
 @keyframes kion-flash{0%,84%,100%{opacity:0}85%{opacity:0.9}86.5%{opacity:0.1}88%{opacity:0.75}91%{opacity:0}}
-@keyframes wx-sway{from{transform:translateX(-2.5px)}to{transform:translateX(2.5px)}}
+@keyframes wx-sun-party{0%,100%{transform:translate(-4px,0) rotate(-16deg) scale(1)}25%{transform:translate(-1px,-6px) rotate(10deg) scale(1.1,.9)}50%{transform:translate(4px,0) rotate(18deg) scale(.92,1.08)}75%{transform:translate(1px,-7px) rotate(-10deg) scale(1.1,.9)}}
+@keyframes wx-cloud-boing{0%,100%{transform:translate(-5px,0) scale(1.14,.84)}25%{transform:translate(-1px,-8px) rotate(-7deg) scale(.92,1.12)}50%{transform:translate(5px,0) scale(1.16,.82)}75%{transform:translate(1px,-8px) rotate(7deg) scale(.92,1.12)}}
 svg[role="img"]{overflow:visible}
-.wx-sun{animation:wx-sway 5s ease-in-out infinite alternate}
-.wx-cloud{animation:wx-sway 3.6s ease-in-out -1.8s infinite alternate-reverse}
+.wx-sun{transform-box:fill-box;transform-origin:center;animation:wx-sun-party .72s ease-in-out infinite}
+.wx-cloud{transform-box:fill-box;transform-origin:50% 100%;animation:wx-cloud-boing .58s ease-in-out -.2s infinite}
 @media (prefers-reduced-motion: reduce){.wx-sun,.wx-cloud{animation:none}}
 @keyframes kion-spin{to{transform:rotate(360deg)}}
 .spin{animation:kion-spin 1s linear infinite}
@@ -63,6 +70,7 @@ svg[role="img"]{overflow:visible}
 <div id="root" data-theme="light">
   <div id="sky" aria-hidden="true"></div>
   <div id="app"></div>
+  <button type="button" id="top-btn" aria-label="ページの先頭へ戻る"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"></path></svg><span id="top-btn-label">TOP</span></button>
   <dialog id="sync" aria-labelledby="sync-h"></dialog>
 </div>
 <noscript>このページを表示するには JavaScript を有効にしてください。</noscript>
@@ -860,6 +868,42 @@ document.addEventListener('pointermove', (ev) => {
   el.style.setProperty('--mx', (ev.clientX - b.left) + 'px');
   el.style.setProperty('--my', (ev.clientY - b.top) + 'px');
 });
+/* TOP ボタン：マウスが近づくと逃げる（数回で疲れてつかまる。キーボード・タッチでは逃げない） */
+(function () {
+  const btn = document.getElementById('top-btn'), label = document.getElementById('top-btn-label');
+  const TAUNTS = ['TOP', 'やだ', 'こっち', 'おそい', 'まだまだ', 'ひぃ', 'もうむり'];
+  const MAX = TAUNTS.length - 1;
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let dodges = 0, dx = 0, dy = 0, last = 0;
+  const reset = () => { dodges = 0; dx = 0; dy = 0; btn.style.transform = ''; btn.classList.remove('tired'); label.textContent = TAUNTS[0]; };
+  window.addEventListener('scroll', () => {
+    const on = window.scrollY > 300;
+    if (!on && btn.classList.contains('show')) reset();
+    btn.classList.toggle('show', on);
+  }, { passive: true });
+  window.addEventListener('resize', reset);
+  btn.addEventListener('click', () => { window.scrollTo({ top: 0, behavior: calm.matches ? 'auto' : 'smooth' }); });
+  document.addEventListener('pointermove', (ev) => {
+    if (ev.pointerType !== 'mouse' || calm.matches || dodges >= MAX || !btn.classList.contains('show') || Date.now() - last < 380) return;
+    const b = btn.getBoundingClientRect();
+    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    if (Math.hypot(ev.clientX - cx, ev.clientY - cy) > 90) return;
+    const W = window.innerWidth, H = window.innerHeight, m = 24;
+    const homeX = btn.offsetLeft + btn.offsetWidth / 2, homeY = btn.offsetTop + btn.offsetHeight / 2;
+    let nx = homeX, ny = homeY, best = -1;
+    for (let i = 0; i < 24; i++) {
+      const x = m + b.width / 2 + Math.random() * (W - 2 * m - b.width);
+      const y = m + b.height / 2 + Math.random() * (H - 2 * m - b.height);
+      const d = Math.hypot(x - ev.clientX, y - ev.clientY);
+      if (d > best) { best = d; nx = x; ny = y; }
+      if (d > Math.min(W, H) * 0.45) break;
+    }
+    dx = nx - homeX; dy = ny - homeY; dodges++; last = Date.now();
+    btn.style.transform = 'translate(' + Math.round(dx) + 'px,' + Math.round(dy) + 'px) rotate(' + (dodges % 2 ? 12 : -12) + 'deg)';
+    label.textContent = TAUNTS[dodges];
+    if (dodges >= MAX) btn.classList.add('tired');
+  });
+})();
 window.addEventListener('hashchange', onRoute);
 setInterval(() => { G.skyKey = G.skyKey; updateSky(); }, 60000);
 setInterval(() => { if (route() === 'home' && !document.hidden) ensureHomeData(true); }, 10 * 60 * 1000);
