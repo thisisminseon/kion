@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kion. — 気温から、今日の服を。</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%2316295a%22%2F%3E%3Ccircle%20cx%3D%2225%22%20cy%3D%2225%22%20r%3D%2210%22%20fill%3D%22%23ffc46b%22%2F%3E%3Cpath%20d%3D%22M25%208v4M8%2025h4M13%2013l3%203M37%2013l-3%203M13%2037l3-3%22%20stroke%3D%22%23f2a33a%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M23%2052h25a9%209%200%200%200%200-18%2012%2012%200%200%200-23%203%207.5%207.5%200%200%200-2%2015z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&amp;family=Noto+Sans+JP:wght@300;400;500;700&amp;display=swap" rel="stylesheet">
 <style>
@@ -41,6 +42,11 @@ dialog::backdrop{background:rgba(5,10,25,0.55)}
 @keyframes kion-twinkle{0%,100%{opacity:0.25}50%{opacity:1}}
 @keyframes kion-glow{0%,100%{transform:scale(1);opacity:0.92}50%{transform:scale(1.05);opacity:1}}
 @keyframes kion-flash{0%,84%,100%{opacity:0}85%{opacity:0.9}86.5%{opacity:0.1}88%{opacity:0.75}91%{opacity:0}}
+@keyframes wx-sway{from{transform:translateX(-2.5px)}to{transform:translateX(2.5px)}}
+svg[role="img"]{overflow:visible}
+.wx-sun{animation:wx-sway 5s ease-in-out infinite alternate}
+.wx-cloud{animation:wx-sway 3.6s ease-in-out -1.8s infinite alternate-reverse}
+@media (prefers-reduced-motion: reduce){.wx-sun,.wx-cloud{animation:none}}
 @keyframes kion-spin{to{transform:rotate(360deg)}}
 .spin{animation:kion-spin 1s linear infinite}
 @media (prefers-reduced-motion: reduce){#sky *{animation:none !important}}
@@ -443,11 +449,18 @@ const IC = {
 const ROW_COLOR = { outer: 'background: var(--accent-soft); color: var(--accent)', tops: 'background: rgba(242,163,58,0.18); color: var(--c-amber)', bottoms: 'background: rgba(110,86,207,0.18); color: var(--c-violet)', acc: 'background: rgba(28,150,136,0.18); color: var(--c-teal)' };
 
 function wxIcon(code, isDay, size) {
+  const s = wxIconRaw(code, isDay, size), cat = wcat(code);
+  if (cat === 'clear' || cat === 'partly') return s;
+  const i = s.indexOf('>') + 1, j = s.lastIndexOf('<');
+  return s.slice(0, i) + '<g class="wx-cloud">' + s.slice(i, j) + '</g>' + s.slice(j);
+}
+function wxIconRaw(code, isDay, size) {
+  const S = (x) => "<g class=\"wx-sun\">" + x + "</g>", C = (x) => "<g class=\"wx-cloud\">" + x + "</g>";
   const cat = wcat(code);
   const open = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 64 64" fill="none" role="img" aria-label="' + wlabel(code) + '">';
   const moon = '<path d="M38 10a22 22 0 1 0 16 36A18 18 0 0 1 38 10z" fill="#f4efd9"></path><circle cx="14" cy="14" r="1.6" fill="#ffffff"></circle><circle cx="52" cy="20" r="1.2" fill="#ffffff"></circle><circle cx="22" cy="6" r="1" fill="#ffffff"></circle>';
-  if (cat === 'clear') return open + (isDay ? '<circle cx="32" cy="32" r="13" fill="#ffc46b"></circle><path d="M32 8v6M32 50v6M8 32h6M50 32h6M15 15l4.2 4.2M44.8 44.8L49 49M15 49l4.2-4.2M44.8 19.2L49 15" stroke="#f2a33a" stroke-width="3" stroke-linecap="round"></path>' : moon) + '</svg>';
-  if (cat === 'partly') return open + (isDay ? '<circle cx="24" cy="24" r="10" fill="#ffc46b"></circle><path d="M24 6v4M24 38v4M6 24h4M38 24h4M11.3 11.3l2.8 2.8M33.9 33.9l2.8 2.8M11.3 36.7l2.8-2.8M33.9 14.1l2.8-2.8" stroke="#f2a33a" stroke-width="2.5" stroke-linecap="round"></path>' : '<path d="M30 6a15 15 0 1 0 11 24A12 12 0 0 1 30 6z" fill="#f4efd9"></path>') + '<path d="M22 52h26a9 9 0 0 0 0-18 12 12 0 0 0-23 3 7.5 7.5 0 0 0-3 15z" fill="rgba(255,255,255,0.92)" stroke="#c9d6ea" stroke-width="1.5"></path></svg>';
+  if (cat === 'clear') return open + S(isDay ? '<circle cx="32" cy="32" r="13" fill="#ffc46b"></circle><path d="M32 8v6M32 50v6M8 32h6M50 32h6M15 15l4.2 4.2M44.8 44.8L49 49M15 49l4.2-4.2M44.8 19.2L49 15" stroke="#f2a33a" stroke-width="3" stroke-linecap="round"></path>' : moon) + '</svg>';
+  if (cat === 'partly') return open + S(isDay ? '<circle cx="24" cy="24" r="10" fill="#ffc46b"></circle><path d="M24 6v4M24 38v4M6 24h4M38 24h4M11.3 11.3l2.8 2.8M33.9 33.9l2.8 2.8M11.3 36.7l2.8-2.8M33.9 14.1l2.8-2.8" stroke="#f2a33a" stroke-width="2.5" stroke-linecap="round"></path>' : '<path d="M30 6a15 15 0 1 0 11 24A12 12 0 0 1 30 6z" fill="#f4efd9"></path>') + C('<path d="M22 52h26a9 9 0 0 0 0-18 12 12 0 0 0-23 3 7.5 7.5 0 0 0-3 15z" fill="rgba(255,255,255,0.92)" stroke="#c9d6ea" stroke-width="1.5"></path>') + '</svg>';
   if (cat === 'cloudy') return open + '<path d="M16 48h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="rgba(255,255,255,0.92)" stroke="#c9d6ea" stroke-width="1.5"></path></svg>';
   if (cat === 'rain') return open + '<path d="M16 40h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="#e3e8f0" stroke="#b4c0d3" stroke-width="1.5"></path><path d="M24 46l-3 8M34 46l-3 8M44 46l-3 8" stroke="#5b8cff" stroke-width="3" stroke-linecap="round"></path></svg>';
   if (cat === 'snow') return open + '<path d="M16 40h32a11 11 0 0 0 0-22 15 15 0 0 0-29 4 9 9 0 0 0-3 18z" fill="#e3e8f0" stroke="#b4c0d3" stroke-width="1.5"></path><circle cx="22" cy="49" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle><circle cx="32" cy="54" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle><circle cx="42" cy="49" r="2.4" fill="#ffffff" stroke="#b4c0d3"></circle></svg>';
